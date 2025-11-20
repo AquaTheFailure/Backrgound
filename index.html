@@ -1,192 +1,217 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>3D FPS with PointerLock (Modules)</title>
-  <style>
-    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #87CEEB; }
-    #ui { position: absolute; top: 10px; left: 10px; z-index: 10; color: white; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 4px; font-family: sans-serif; }
-    #settings { position: absolute; top: 80px; left: 10px; z-index: 10; background: rgba(0,0,0,0.7); color: white; padding: 10px; border-radius: 4px; display: none; }
-    #settings label { display: block; margin: 6px 0; }
-    #settings input[type="text"], #settings input[type="number"] { width: 60px; }
-  </style>
+    <meta charset="UTF-8">
+    <title>Three.js FPS Flat Terrain</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            background-color: #87CEEB; /* fallback sky */
+        }
+        #blocker {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+        #instructions {
+            color: white;
+            text-align: center;
+            cursor: pointer;
+        }
+        #hud {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 18px;
+            z-index: 5;
+        }
+    </style>
 </head>
 <body>
-  <div id="ui">
-    <div id="sprintStatus">Sprint: OFF</div>
-    <div id="crouchStatus">Crouch: OFF</div>
-    <div id="instr">Click to lock mouse & start</div>
-  </div>
-  <div id="settings">
-    <label>Mouse Sensitivity: <input type="number" id="sens" step="0.1" min="0.1" max="5"></label>
-    <label>Sprint Key: <input type="text" id="keySprint" maxlength="1"></label>
-    <label>Crouch Key: <input type="text" id="keyCrouch" maxlength="1"></label>
-    <button id="saveSettings">Save Settings</button>
-  </div>
+<div id="blocker">
+    <div id="instructions">
+        <h1>Click to play</h1>
+        <p>(W, A, S, D = Move, SPACE = Jump, SHIFT = Sprint, C = Crouch, MOUSE = Look around)</p>
+    </div>
+</div>
+<div id="hud">
+    Sprint: OFF<br>
+    Crouch: OFF
+</div>
 
-  <script type="module">
-    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js';
-    import { PointerLockControls } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/controls/PointerLockControls.js';
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r153/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r153/examples/js/controls/PointerLockControls.js"></script>
+<script>
+let camera, scene, renderer;
+let controls, raycaster;
+let objects = [];
+let blocker = document.getElementById('blocker');
+let instructions = document.getElementById('instructions');
+let hud = document.getElementById('hud');
 
-    // --- Settings & LocalStorage ---
-    const defaultSettings = { sensitivity: 1.0, keySprint: 'Shift', keyCrouch: 'C' };
-    let settings = JSON.parse(localStorage.getItem('fpsSettings')) || defaultSettings;
+let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+let canJump = false;
+let isSprinting = false, isCrouching = false;
 
-    const sensInput = document.getElementById('sens');
-    const keySprintInput = document.getElementById('keySprint');
-    const keyCrouchInput = document.getElementById('keyCrouch');
-    const saveBtn = document.getElementById('saveSettings');
-    const settingsDiv = document.getElementById('settings');
-    const instrDiv = document.getElementById('instr');
-    const sprintStatus = document.getElementById('sprintStatus');
-    const crouchStatus = document.getElementById('crouchStatus');
+let velocity = new THREE.Vector3();
+let direction = new THREE.Vector3();
+let clock = new THREE.Clock();
 
-    sensInput.value = settings.sensitivity;
-    keySprintInput.value = settings.keySprint;
-    keyCrouchInput.value = settings.keyCrouch;
+const SPEED = 400;
+const JUMP_SPEED = 350;
+const CROUCH_HEIGHT = 1;
 
-    saveBtn.addEventListener('click', () => {
-      settings.sensitivity = parseFloat(sensInput.value) || 1;
-      settings.keySprint = keySprintInput.value.toUpperCase() || defaultSettings.keySprint;
-      settings.keyCrouch = keyCrouchInput.value.toUpperCase() || defaultSettings.keyCrouch;
-      localStorage.setItem('fpsSettings', JSON.stringify(settings));
-      alert('Settings saved');
-    });
+init();
+animate();
 
-    document.addEventListener('keydown', e => {
-      if (e.code === 'Escape') {
-        settingsDiv.style.display = settingsDiv.style.display === 'none' ? 'block' : 'none';
-      }
-    });
+function init() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87CEEB); // Sky blue
+    scene.fog = new THREE.Fog(0x87CEEB, 0, 1000);
 
-    // --- Three.js Setup ---
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x87CEEB);
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 1, 2000);
 
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    // Light (sun)
+    const sun = new THREE.DirectionalLight(0xffff88, 1);
+    sun.position.set(100, 400, 100);
+    sun.castShadow = true;
+    scene.add(sun);
+
+    const ambient = new THREE.AmbientLight(0xffffff, 0.3);
+    scene.add(ambient);
+
+    // Renderer
+    renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
     document.body.appendChild(renderer.domElement);
 
-    // --- Terrain ---
-    const loader = new THREE.TextureLoader();
-    const grass = loader.load('https://threejs.org/examples/textures/terrain/grasslight-big.jpg');
-    grass.wrapS = grass.wrapT = THREE.RepeatWrapping;
-    grass.repeat.set(50, 50);
+    // PointerLockControls
+    controls = new THREE.PointerLockControls(camera, document.body);
+    scene.add(controls.getObject());
 
-    const groundGeo = new THREE.PlaneGeometry(500, 500);
-    const groundMat = new THREE.MeshStandardMaterial({ map: grass });
-    const ground = new THREE.Mesh(groundGeo, groundMat);
-    ground.rotation.x = -Math.PI / 2;
-    ground.receiveShadow = true;
-    scene.add(ground);
-
-    // --- Sun Light ---
-    const sun = new THREE.DirectionalLight(0xffff88, 1.5);
-    sun.position.set(100, 200, 100);
-    sun.castShadow = true;
-    sun.shadow.mapSize.width = sun.shadow.mapSize.height = 2048;
-    scene.add(sun);
-
-    const ambient = new THREE.AmbientLight(0xffffff, 0.4);
-    scene.add(ambient);
-
-    // --- Controls / Player State ---
-    const controls = new PointerLockControls(camera, document.body);
-    document.body.addEventListener('click', () => {
-      controls.lock();
-      instrDiv.style.display = 'none';
+    // Pointer lock
+    instructions.addEventListener('click', function () {
+        controls.lock();
     });
 
-    const velocity = new THREE.Vector3();
-    const direction = new THREE.Vector3();
-    let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
-    let isSprinting = false, isCrouching = false, canJump = false;
-
-    const keyState = {};
-    document.addEventListener('keydown', (e) => keyState[e.code] = true);
-    document.addEventListener('keyup', (e) => keyState[e.code] = false);
-
-    // --- Animation / Physics Loop ---
-    const clock = new THREE.Clock();
-    function animate() {
-      requestAnimationFrame(animate);
-
-      const delta = clock.getDelta();
-      velocity.y -= 9.8 * delta;
-
-      direction.x = 0;
-      direction.z = 0;
-      if (keyState['KeyW']) direction.z -= 1;
-      if (keyState['KeyS']) direction.z += 1;
-      if (keyState['KeyA']) direction.x -= 1;
-      if (keyState['KeyD']) direction.x += 1;
-      direction.normalize();
-
-      isSprinting = keyState[settings.keySprint] || keyState['ShiftLeft'];
-      isCrouching = keyState[settings.keyCrouch] || keyState['KeyC'];
-
-      let speed = 5;
-      if (isSprinting) speed = 10;
-      if (isCrouching) speed = 2.5;
-
-      if (direction.length() > 0) {
-        velocity.x -= direction.x * speed * delta;
-        velocity.z -= direction.z * speed * delta;
-      }
-
-      if (keyState['Space'] && canJump) {
-        velocity.y = 8;
-        canJump = false;
-      }
-
-      controls.moveRight(-velocity.x * delta);
-      controls.moveForward(-velocity.z * delta);
-
-      camera.position.y += velocity.y * delta;
-      const crouchHeight = isCrouching ? 1.0 : 2.0;
-      if (camera.position.y < crouchHeight) {
-        velocity.y = 0;
-        camera.position.y = crouchHeight;
-        canJump = true;
-      }
-      // Smooth crouch / uncrouch
-      camera.position.y += (crouchHeight - camera.position.y) * 5 * delta;
-
-      sprintStatus.innerText = `Sprint: ${isSprinting ? 'ON' : 'OFF'}`;
-      crouchStatus.innerText = `Crouch: ${isCrouching ? 'ON' : 'OFF'}`;
-
-      renderer.render(scene, camera);
-    }
-    animate();
-
-    // --- Mouse Look ---
     controls.addEventListener('lock', () => {
-      document.addEventListener('mousemove', onMouseMove);
+        blocker.style.display = 'none';
     });
     controls.addEventListener('unlock', () => {
-      document.removeEventListener('mousemove', onMouseMove);
+        blocker.style.display = 'flex';
     });
 
-    function onMouseMove(event) {
-      const dx = event.movementX;
-      const dy = event.movementY;
-      if (Math.abs(dx) > Math.abs(dy)) {
-        controls.getObject().rotation.y -= dx * 0.002 * settings.sensitivity;
-      } else {
-        camera.rotation.x -= dy * 0.002 * settings.sensitivity;
-        camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));
-      }
+    // Floor (flat terrain)
+    const textureLoader = new THREE.TextureLoader();
+    const grassTexture = textureLoader.load('https://threejs.org/examples/textures/grasslight-big.jpg');
+    grassTexture.wrapS = grassTexture.wrapT = THREE.RepeatWrapping;
+    grassTexture.repeat.set(100, 100);
+
+    const floorGeometry = new THREE.PlaneGeometry(2000, 2000);
+    const floorMaterial = new THREE.MeshStandardMaterial({ map: grassTexture });
+    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+    floor.rotation.x = -Math.PI/2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    // Raycaster for ground detection
+    raycaster = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 10);
+
+    // Events
+    const onKeyDown = function (event) {
+        switch(event.code){
+            case 'ArrowUp':
+            case 'KeyW': moveForward = true; break;
+            case 'ArrowLeft':
+            case 'KeyA': moveLeft = true; break;
+            case 'ArrowDown':
+            case 'KeyS': moveBackward = true; break;
+            case 'ArrowRight':
+            case 'KeyD': moveRight = true; break;
+            case 'ShiftLeft': isSprinting = true; break;
+            case 'Space': if (canJump) velocity.y += JUMP_SPEED; canJump = false; break;
+            case 'KeyC': isCrouching = true; break;
+        }
+        updateHUD();
+    };
+
+    const onKeyUp = function (event) {
+        switch(event.code){
+            case 'ArrowUp':
+            case 'KeyW': moveForward = false; break;
+            case 'ArrowLeft':
+            case 'KeyA': moveLeft = false; break;
+            case 'ArrowDown':
+            case 'KeyS': moveBackward = false; break;
+            case 'ArrowRight':
+            case 'KeyD': moveRight = false; break;
+            case 'ShiftLeft': isSprinting = false; break;
+            case 'KeyC': isCrouching = false; break;
+        }
+        updateHUD();
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+
+    window.addEventListener('resize', onWindowResize);
+}
+
+function updateHUD(){
+    hud.innerHTML = `Sprint: ${isSprinting ? 'ON' : 'OFF'}<br>Crouch: ${isCrouching ? 'ON' : 'OFF'}`;
+}
+
+function onWindowResize(){
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function animate(){
+    requestAnimationFrame(animate);
+
+    const delta = clock.getDelta();
+    const speed = (isSprinting ? 2 : 1) * SPEED * delta;
+
+    velocity.x -= velocity.x * 10.0 * delta;
+    velocity.z -= velocity.z * 10.0 * delta;
+    velocity.y -= 9.8 * 100.0 * delta; // gravity
+
+    direction.z = Number(moveForward) - Number(moveBackward);
+    direction.x = Number(moveRight) - Number(moveLeft);
+    direction.normalize();
+
+    if(moveForward || moveBackward) velocity.z -= direction.z * speed;
+    if(moveLeft || moveRight) velocity.x -= direction.x * speed;
+
+    controls.moveRight(-velocity.x * delta);
+    controls.moveForward(-velocity.z * delta);
+    controls.getObject().position.y += velocity.y * delta;
+
+    // ground collision
+    if(controls.getObject().position.y < 10){
+        velocity.y = 0;
+        controls.getObject().position.y = 10;
+        canJump = true;
     }
 
-    // --- Window Resize ---
-    window.addEventListener('resize', () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
-  </script>
+    // crouch animation
+    controls.getObject().scale.y = isCrouching ? 0.5 : 1;
+
+    renderer.render(scene, camera);
+}
+</script>
 </body>
 </html>
